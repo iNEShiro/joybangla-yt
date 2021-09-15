@@ -75,8 +75,16 @@ const defaultPlayerOptions = {
     leaveOnStop: true,
     leaveOnEmpty: true,
     leaveOnEmptyCooldown: 180000,
-    autoSelfDeaf: true
+    autoSelfDeaf: true,
+    quality: 'high',
+    enableLive: false,
+    ytdlRequestOptions: {}
 }
+
+/**
+ * leaveOnEndCooldown (FIXED)
+ */
+let timer;
 
 class Player extends EventEmitter {
     /**
@@ -341,6 +349,7 @@ class Player extends EventEmitter {
      * client.player.play(message, "Despacito", true);
      */
     async play (message, query, firstResult = false) {
+		clearTimeout(timer);
         if (this.util.isYTPlaylistLink(query)) {
             return this._handlePlaylist(message, query)
         }
@@ -428,6 +437,21 @@ class Player extends EventEmitter {
 		this.emit('queueStopped', message)
     }
 
+    //where no guild
+    stopGuild (guild) {
+        // Get guild queue
+        const queue = this.queues.find((g) => g.guildID === guild.id)
+        if (!queue) return; //this.emit('error', 'NotPlaying', message)
+        // Stop the dispatcher
+        queue.stopped = true
+        queue.tracks = []
+        if (queue.stream) queue.stream.destroy()
+        queue.voiceConnection.dispatcher.end()
+        if (this.options.leaveOnStop) queue.voiceConnection.channel.leave()
+        this.queues.delete(guild.id)
+		this.emit('guildEnd', guild)
+    }
+
     /**
      * Change the server volume.
      * @param {Discord.Message} message
@@ -452,6 +476,13 @@ class Player extends EventEmitter {
     getQueue (message) {
         // Gets guild queue
         const queue = this.queues.get(message.guild.id)
+        return queue
+    }
+
+    //where no guild
+    getGuildQueue (guild) {
+        // Gets guild queue
+        const queue = this.queues.get(guild.id)
         return queue
     }
 
@@ -527,6 +558,18 @@ class Player extends EventEmitter {
         if (!queue) return this.emit('error', 'NotPlaying', message)
         // Enable/Disable repeat mode
         queue.repeatMode = enabled
+        this.emit('loopMode', message, queue.tracks[0])
+        // Return the repeat mode
+        return queue.repeatMode
+    }
+
+    //where no guild
+    setGuildRepeatMode (guild, enabled) {
+        // Get guild queue
+        const queue = this.queues.get(guild.id)
+        if (!queue) return; //this.emit('error', 'NotPlaying', message)
+        // Enable/Disable repeat mode
+        queue.repeatMode = enabled
         // Return the repeat mode
         return queue.repeatMode
     }
@@ -542,6 +585,7 @@ class Player extends EventEmitter {
         if (!queue) return this.emit('error', 'NotPlaying', message)
         // Enable/Disable loop mode
         queue.loopMode = enabled
+        this.emit('loopMode', message, queue.tracks[0])
         // Return the repeat mode
         return queue.loopMode
     }
@@ -712,7 +756,7 @@ class Player extends EventEmitter {
                 if (seekTime) {
                     queue.additionalStreamTime = seekTime
                 }
-                queue.voiceConnection.dispatcher.setVolumeLogarithmic(queue.calculatedVolume / 140)
+                queue.voiceConnection.dispatcher.setVolumeLogarithmic(queue.calculatedVolume / 150)
                 // When the track starts
                 queue.voiceConnection.dispatcher.on('start', () => {
                     resolve()
@@ -736,16 +780,16 @@ class Player extends EventEmitter {
     async _playTrack (queue, firstPlay) {
         if (queue.stopped) return
         // If there isn't next music in the queue
-        if (queue.tracks.length === 1 && !queue.repeatMode && !firstPlay) {
+        if (queue.tracks.length === 1 && !queue.repeatMode && !queue.loopMode && !firstPlay) {
 			this.queues.delete(queue.guildID)
             // Leave the voice channel
             if (this.options.leaveOnEnd && !queue.stopped) {    
 				
-				setTimeout(() => {
+				timer = setTimeout(() => {
                     queue.voiceConnection.channel.leave()
                     // Remove the guild from the guilds list
                     this.queues.delete(queue.guildID)
-                }, this.options.leaveOnEndCooldown || 600000)
+                }, /*this.options.leaveOnEndCooldown ||*/ 300000)
             }
             // Emit stop event
             if (queue.stopped) {
